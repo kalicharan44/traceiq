@@ -1,0 +1,50 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "module": "ESNext",
+    "types": ["vite/client"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": [
+    "src/main.tsx",
+    "src/App.tsx",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "src/components/common/Button.tsx",
+    "src/components/common/DataTable.tsx",
+    "src/components/common/KpiCard.tsx",
+    "src/components/common/PageState.tsx",
+    "src/components/common/Panel.tsx",
+    "src/components/common/StatusBadge.tsx",
+    "src/components/features/**/*.tsx",
+    "src/components/layout/AppShell.tsx",
+    "src/components/layout/Header.tsx",
+    "src/components/layout/Sidebar.tsx",
+    "src/hooks/**/*.ts",
+    "src/screens/**/*.tsx",
+    "src/services/**/*.ts",
+    "src/types/api.ts",
+    "src/types/recharts.d.ts",
+    "vite.config.ts"
+  ],
+  "exclude": ["dist", "src/pages", "src/context", "src/data", "src/types/supplyChain.ts", "src/types/nexusChain.ts"]
+}

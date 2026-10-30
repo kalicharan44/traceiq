@@ -1,0 +1,8 @@
+{
+  "name": "TraceIQ — Supply Chain Traceability & AI Recall Command Center",
+  "description": "Enterprise supply chain genealogy, real-time batch traceability, automated anomaly detection, and rapid recall orchestration command center.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

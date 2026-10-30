@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+:root {
+  --tq-app-bar-height: 76px;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --tq-page-bg: #f3faf7;
+  --tq-surface: #ffffff;
+  --tq-surface-muted: #edf7f3;
+  --tq-border: #d6e9e2;
+  --tq-text: #17302b;
+  --tq-muted: #637571;
+  --tq-accent: #0f8a78;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --tq-page-bg: #07110f;
+  --tq-surface: #0c1917;
+  --tq-surface-muted: #111f1d;
+  --tq-border: #203532;
+  --tq-text: #d9e7e3;
+  --tq-muted: #849993;
+  --tq-accent: #39d6b7;
+}
+
+@layer base {
+  * {
+    border-color: #E2E8F0;
+  }
+  
+  body {
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: var(--tq-page-bg, #F8FAFC);
+    color: var(--tq-text, #1E293B);
+  }
+}
+
+/* Custom sleek scrollbars for light theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Dark theme: graphite surfaces with the teal accent from the TraceIQ reference. */
+html[data-theme='dark'] body {
+  background-color: var(--tq-page-bg);
+  color: var(--tq-text);
+}
+
+html[data-theme='dark'] .bg-slate-950 { background-color: #050e0d !important; }
+html[data-theme='dark'] .bg-slate-900,
+html[data-theme='dark'] [class~='bg-slate-900/60'] { background-color: #0a1715 !important; }
+html[data-theme='dark'] * {
+  border-color: var(--tq-border);
+}
+
+html[data-theme='dark'] .bg-slate-50 { background-color: var(--tq-page-bg) !important; }
+html[data-theme='dark'] .bg-slate-100 { background-color: var(--tq-surface-muted) !important; }
+html[data-theme='dark'] .bg-slate-200 { background-color: #1c302d !important; }
+html[data-theme='dark'] .bg-white,
+html[data-theme='dark'] [class~='bg-white/95'] { background-color: var(--tq-surface) !important; }
+html[data-theme='dark'] .text-slate-950,
+html[data-theme='dark'] .text-slate-900 { color: #e7f1ee !important; }
+html[data-theme='dark'] .text-slate-800 { color: #d2e0dc !important; }
+html[data-theme='dark'] .text-slate-700 { color: #bdcfca !important; }
+html[data-theme='dark'] .text-slate-600 { color: #9aafaa !important; }
+html[data-theme='dark'] .text-slate-500 { color: #849993 !important; }
+html[data-theme='dark'] .text-slate-400 { color: #718580 !important; }
+html[data-theme='dark'] .bg-teal-600 { background-color: #09a98e !important; }
+html[data-theme='dark'] .text-teal-600 { color: #39d6b7 !important; }
+html[data-theme='dark'] .bg-teal-50 { background-color: #102b27 !important; }
+html[data-theme='dark'] .text-teal-700,
+html[data-theme='dark'] .text-teal-800 { color: #61d5bd !important; }
+html[data-theme='dark'] .border-teal-100,
+html[data-theme='dark'] .border-teal-200 { border-color: #22594f !important; }
+html[data-theme='dark'] [class~='hover:border-teal-300']:hover { border-color: #2a8b78 !important; }
+html[data-theme='dark'] [class~='hover:bg-slate-50']:hover { background-color: #142522 !important; }
+html[data-theme='dark'] [class~='hover:bg-slate-100']:hover { background-color: #192b28 !important; }
+html[data-theme='dark'] [class~='hover:bg-white']:hover { background-color: #12211f !important; }
+html[data-theme='dark'] [class~='hover:bg-teal-700']:hover { background-color: #078f79 !important; }
+html[data-theme='dark'] .bg-emerald-50 { background-color: #102b22 !important; }
+html[data-theme='dark'] .text-emerald-700 { color: #5fe0b2 !important; }
+html[data-theme='dark'] .border-emerald-200 { border-color: #225743 !important; }
+html[data-theme='dark'] .bg-amber-50 { background-color: #302719 !important; }
+html[data-theme='dark'] .text-amber-900 { color: #f7d89a !important; }
+html[data-theme='dark'] .text-amber-800 { color: #e9c880 !important; }
+html[data-theme='dark'] .text-amber-700 { color: #e9c880 !important; }
+html[data-theme='dark'] .border-amber-200 { border-color: #6a502b !important; }
+html[data-theme='dark'] .bg-rose-50 { background-color: #321b20 !important; }
+html[data-theme='dark'] .text-rose-700,
+html[data-theme='dark'] .text-rose-800,
+html[data-theme='dark'] .text-rose-900 { color: #ff9eaa !important; }
+html[data-theme='dark'] .text-rose-600 { color: #ff9eaa !important; }
+html[data-theme='dark'] .border-rose-200 { border-color: #71353f !important; }
+html[data-theme='dark'] .shadow-slate-900\/10 { --tw-shadow-color: rgb(0 0 0 / 0.4); }
+html[data-theme='dark'] ::-webkit-scrollbar-track { background: #0b1715; }
+html[data-theme='dark'] ::-webkit-scrollbar-thumb { background: #29403b; }
+html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover { background: #3b5b53; }
+
+/* Light theme also carries through to the navigation, not just the content canvas. */
+html[data-theme='light'] .bg-slate-950 { background-color: #ffffff !important; }
+html[data-theme='light'] .bg-slate-50 { background-color: var(--tq-page-bg) !important; }
+html[data-theme='light'] .bg-slate-100 { background-color: var(--tq-surface-muted) !important; }
+html[data-theme='light'] .border-slate-200 { border-color: var(--tq-border) !important; }
+html[data-theme='light'] .border-slate-100,
+html[data-theme='light'] .border-slate-800 { border-color: var(--tq-border) !important; }
+html[data-theme='light'] .text-slate-200 { color: #334155 !important; }
+html[data-theme='light'] .text-slate-400 { color: #64748b !important; }
+html[data-theme='light'] .text-slate-500 { color: #64748b !important; }
+html[data-theme='light'] aside.bg-slate-950 p.text-white { color: #0f172a !important; }
+html[data-theme='light'] .bg-slate-900,
+html[data-theme='light'] [class~='bg-slate-900/60'],
+html[data-theme='light'] [class~='bg-slate-50/60'] { background-color: var(--tq-surface-muted) !important; }
+html[data-theme='light'] [class~='hover:bg-slate-900']:hover,
+html[data-theme='light'] [class~='hover:bg-slate-50']:hover,
+html[data-theme='light'] [class~='hover:bg-slate-100']:hover { background-color: #e8f4ef !important; }
+html[data-theme='light'] .bg-teal-600 { background-color: var(--tq-accent) !important; color: #ffffff !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

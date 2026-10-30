@@ -1,0 +1,12 @@
+export { DashboardScreen } from './DashboardScreen';
+export { SuppliersScreen } from './SuppliersScreen';
+export { TraceabilityScreen } from './TraceabilityScreen';
+export { QualityScreen } from './QualityScreen';
+export { InventoryScreen } from './InventoryScreen';
+export { RecallScreen } from './RecallScreen';
+export { AiInvestigationScreen } from './AiInvestigationScreen';
+export { AnomaliesScreen } from './AnomaliesScreen';
+export { AuditLogScreen } from './AuditLogScreen';
+export { ReportsScreen } from './ReportsScreen';
+export { DocumentsScreen } from './DocumentsScreen';
+export { ValidationScreen } from './ValidationScreen';

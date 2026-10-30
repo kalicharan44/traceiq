@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-traceiq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_change_me}
+      POSTGRES_DB: ${POSTGRES_DB:-traceiq}
+    volumes:
+      - traceiq_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-traceiq} -d ${POSTGRES_DB:-traceiq}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build: ./traceiq-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-traceiq}:${POSTGRES_PASSWORD:-local_dev_change_me}@db:5432/${POSTGRES_DB:-traceiq}
+      CORS_ORIGINS: http://localhost:3000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-flash-latest}
+      AUTO_CREATE_SCHEMA: "false"
+      LOAD_FULL_DATASET: ${LOAD_FULL_DATASET:-false}
+      PRIVATE_STORAGE_DIR: /data/documents
+    volumes:
+      - traceiq_documents:/data/documents
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build: ./traceiq-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  traceiq_postgres:
+  traceiq_documents:

@@ -1,0 +1,1460 @@
+import React, { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
+import {
+  LayoutDashboard, Truck, Package, Factory, Warehouse, ShieldAlert,
+  Activity, Search, AlertTriangle, CheckCircle, Clock, SearchCode,
+  Database, FileText, RotateCcw, AlertCircle, ArrowRight, ArrowLeft, Info,
+  MessageSquare, Play, Lock, FileWarning, Download, Bell, User,
+  ChevronRight, Sparkles, Box, Share2, ShieldCheck, History
+} from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer,
+  LineChart, Line, Cell
+} from 'recharts';
+
+// --- Types & Constants ---
+const STATUS = {
+  OK: 'OK',
+  WARNING: 'WARNING',
+  QUARANTINED: 'QUARANTINED',
+  RECALLED: 'RECALLED',
+  IN_TRANSIT: 'IN_TRANSIT',
+  DELIVERED: 'DELIVERED',
+  HOLD: 'HOLD'
+};
+
+const generateId = () => {
+  return typeof crypto !== 'undefined' && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : `id-${Math.random().toString(36).substr(2, 9)}-${Date.now()}`;
+};
+
+// --- Synthetic Seed Data ---
+const INITIAL_DATA = {
+  suppliers: [
+    { id: 'SUP-01', name: 'Apex Materials Ltd.', riskScore: 12 },
+    { id: 'SUP-02', name: 'Global Synthetics Inc.', riskScore: 45 },
+    { id: 'SUP-03', name: 'Naturals Co.', riskScore: 5 }
+  ],
+  lots: [
+    { id: 'RAW-1041', type: 'RAW', supplierId: 'SUP-01', qty: 1000, uom: 'kg', status: STATUS.OK },
+    { id: 'RAW-1042', type: 'RAW', supplierId: 'SUP-01', qty: 2000, uom: 'kg', status: STATUS.WARNING }, // Target for recall
+    { id: 'RAW-1043', type: 'RAW', supplierId: 'SUP-02', qty: 500, uom: 'kg', status: STATUS.OK },
+    { id: 'RAW-9999', type: 'RAW', supplierId: 'SUP-03', qty: 100, uom: 'kg', status: STATUS.OK }, 
+    { id: 'FG-3001', type: 'FG', qty: 500, uom: 'units', status: STATUS.OK },
+    { id: 'FG-3002', type: 'FG', qty: 1000, uom: 'units', status: STATUS.OK },
+    { id: 'FG-3003', type: 'FG', qty: 800, uom: 'units', status: STATUS.OK },
+    { id: 'FG-4001', type: 'FG', qty: 200, uom: 'units', status: STATUS.OK } 
+  ],
+  productionOrders: [
+    { id: 'PO-2001', inputLots: [{ id: 'RAW-1042', qty: 500 }], outputLot: 'FG-3001', status: 'COMPLETED' },
+    { id: 'PO-2002', inputLots: [{ id: 'RAW-1042', qty: 1000 }, { id: 'RAW-1043', qty: 200 }], outputLot: 'FG-3002', status: 'COMPLETED' },
+    { id: 'PO-2003', inputLots: [{ id: 'RAW-1041', qty: 800 }], outputLot: 'FG-3003', status: 'COMPLETED' },
+    { id: 'PO-9999', inputLots: [{ id: 'RAW-MISSING', qty: 100 }], outputLot: 'FG-4001', status: 'COMPLETED' } // Anomaly 1
+  ],
+  warehouses: [
+    { id: 'WH-East', name: 'Eastern Distribution Center' },
+    { id: 'WH-West', name: 'Western Hub' }
+  ],
+  inventory: [
+    { id: 'INV-1', lotId: 'FG-3001', warehouseId: 'WH-East', qty: 200, status: STATUS.OK },
+    { id: 'INV-2', lotId: 'FG-3002', warehouseId: 'WH-East', qty: 500, status: STATUS.OK },
+    { id: 'INV-3', lotId: 'FG-3003', warehouseId: 'WH-West', qty: 800, status: STATUS.OK },
+    { id: 'INV-4', lotId: 'RAW-1042', warehouseId: 'WH-East', qty: 500, status: STATUS.OK } 
+  ],
+  customers: [
+    { id: 'CUST-A', name: 'Alpha Retail Corp' },
+    { id: 'CUST-B', name: 'Beta Distributors' },
+    { id: 'CUST-C', name: 'Gamma Healthcare' }
+  ],
+  shipments: [
+    { id: 'SHP-001', lotId: 'FG-3001', customerId: 'CUST-A', qty: 300, status: STATUS.DELIVERED, date: '2026-10-15' },
+    { id: 'SHP-002', lotId: 'FG-3002', customerId: 'CUST-B', qty: 500, status: STATUS.IN_TRANSIT, date: '2026-10-21' },
+    { id: 'SHP-003', lotId: 'FG-4001', customerId: 'CUST-C', qty: 500, status: STATUS.DELIVERED, date: '2026-10-20' } // Anomaly 2
+  ],
+  auditEvents: [
+    { id: generateId(), timestamp: new Date(Date.now() - 86400000).toISOString(), actor: 'System', action: 'DATA_GENERATED', target: 'ALL', details: 'Synthetic data seeded.' }
+  ]
+};
+
+const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+
+// --- Custom Hooks ---
+function useLocalStorageState(key, defaultValue) {
+  const [state, setState] = useState(() => {
+    try {
+      const item = window.localStorage.getItem(key);
+      return item ? JSON.parse(item) : deepClone(defaultValue);
+    } catch (error) {
+      return deepClone(defaultValue);
+    }
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem(key, JSON.stringify(state));
+  }, [key, state]);
+
+  return [state, setState];
+}
+
+// --- Global Context ---
+const AppContext = createContext();
+
+// --- UI Components ---
+const Card = ({ children, className = '', noPadding = false }) => (
+  <div className={`bg-white rounded-2xl border border-slate-200/80 shadow-[0_2px_10px_-3px_rgba(6,81,237,0.05)] overflow-hidden transition-all ${noPadding ? '' : 'p-6'} ${className}`}>
+    {children}
+  </div>
+);
+
+const Modal = ({ isOpen, title, message, onConfirm, onCancel, confirmText = "Confirm", cancelText = "Cancel", isDanger = false, isAlert = false }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-0">
+      <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={isAlert ? onConfirm : onCancel} />
+      <div className="relative bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-100 animate-in zoom-in-95 duration-200 overflow-hidden">
+        <div className={`h-1.5 w-full ${isDanger ? 'bg-red-500' : 'bg-blue-600'}`} />
+        <div className="p-6 sm:p-8">
+          <div className="flex items-start gap-4">
+            <div className={`p-3 rounded-full shrink-0 ${isDanger ? 'bg-red-50 text-red-600' : 'bg-blue-50 text-blue-600'}`}>
+              {isDanger ? <AlertTriangle className="w-6 h-6" /> : <Info className="w-6 h-6" />}
+            </div>
+            <div>
+              <h3 className="text-xl font-semibold text-slate-900 tracking-tight">{title}</h3>
+              <p className="text-slate-600 mt-2 text-sm leading-relaxed">{message}</p>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 mt-8">
+            {!isAlert && (
+              <Button variant="secondary" onClick={onCancel}>{cancelText}</Button>
+            )}
+            <Button variant={isDanger ? 'danger' : 'primary'} onClick={onConfirm}>{confirmText}</Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Badge = ({ children, status, className = '' }) => {
+  const styles = {
+    [STATUS.OK]: 'bg-teal-50 text-teal-700 border-teal-200/50',
+    [STATUS.WARNING]: 'bg-amber-50 text-amber-700 border-amber-200/50',
+    [STATUS.QUARANTINED]: 'bg-red-50 text-red-700 border-red-200/50',
+    [STATUS.RECALLED]: 'bg-red-50 text-red-700 border-red-200/50',
+    [STATUS.HOLD]: 'bg-orange-50 text-orange-700 border-orange-200/50',
+    [STATUS.DELIVERED]: 'bg-blue-50 text-blue-700 border-blue-200/50',
+    [STATUS.IN_TRANSIT]: 'bg-indigo-50 text-indigo-700 border-indigo-200/50',
+    CRITICAL: 'bg-red-50 text-red-700 border-red-200/50',
+    INFO: 'bg-blue-50 text-blue-700 border-blue-200/50',
+    VIOLET: 'bg-violet-50 text-violet-700 border-violet-200/50',
+    DEFAULT: 'bg-slate-100 text-slate-700 border-slate-200/50'
+  };
+  return (
+    <span className={`px-2.5 py-1 rounded-full text-xs font-medium border whitespace-nowrap tracking-wide ${styles[status] || styles.DEFAULT} ${className}`}>
+      {children || status}
+    </span>
+  );
+};
+
+const Button = ({ children, onClick, variant = 'primary', icon: Icon, disabled = false, className = '' }) => {
+  const base = "inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-offset-1";
+  const variants = {
+    primary: "bg-blue-600 text-white hover:bg-blue-700 shadow-sm shadow-blue-500/20 focus:ring-blue-500",
+    secondary: "bg-white text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-slate-50 focus:ring-slate-200",
+    danger: "bg-red-600 text-white hover:bg-red-700 shadow-sm shadow-red-500/20 focus:ring-red-500",
+    ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:ring-slate-200",
+    violet: "bg-violet-600 text-white hover:bg-violet-700 shadow-sm shadow-violet-500/20 focus:ring-violet-500"
+  };
+  return (
+    <button onClick={onClick} disabled={disabled} className={`${base} ${variants[variant]} ${className}`}>
+      {Icon && <Icon className="w-4 h-4 mr-2" />}
+      {children}
+    </button>
+  );
+};
+
+const TooltipIcon = ({ text }) => (
+  <span className="group relative inline-flex items-center ml-1 cursor-help align-middle">
+    <Info className="w-4 h-4 text-slate-400 hover:text-slate-600 transition-colors" />
+    <span className="hidden group-hover:block absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-2.5 bg-slate-900 text-white text-xs rounded-lg shadow-xl z-50 text-center pointer-events-none font-normal leading-relaxed border border-slate-700">
+      {text}
+      <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900"></span>
+    </span>
+  </span>
+);
+
+// --- Core Engine: Traceability & Impact Analysis ---
+const buildTraceabilityGraph = (db, targetId) => {
+  const impact = {
+    suppliers: new Set(),
+    rawLots: new Set(),
+    pos: new Set(),
+    fgLots: new Set(),
+    inventory: new Set(),
+    shipments: new Set(),
+    customers: new Set(),
+    missingLots: new Set()
+  };
+  
+  const visitedDown = new Set();
+  const visitedUp = new Set();
+
+  const traverseDownstream = (lotId) => {
+    if (visitedDown.has(lotId)) return;
+    visitedDown.add(lotId);
+
+    const lot = db.lots.find(l => l.id === lotId);
+    if (!lot) {
+      impact.missingLots.add(lotId);
+      return;
+    }
+
+    if (lot.type === 'RAW') {
+      impact.rawLots.add(lotId);
+      const relatedPOs = db.productionOrders.filter(po => po.inputLots.some(il => il.id === lotId));
+      relatedPOs.forEach(po => {
+        impact.pos.add(po.id);
+        if (po.outputLot) traverseDownstream(po.outputLot);
+      });
+      db.inventory.filter(i => i.lotId === lotId).forEach(i => impact.inventory.add(i.id));
+    } else {
+      impact.fgLots.add(lotId);
+      db.inventory.filter(i => i.lotId === lotId).forEach(i => impact.inventory.add(i.id));
+      db.shipments.filter(s => s.lotId === lotId).forEach(s => {
+        impact.shipments.add(s.id);
+        impact.customers.add(s.customerId);
+      });
+    }
+  };
+
+  const traverseUpstream = (lotId) => {
+    if (visitedUp.has(lotId)) return;
+    visitedUp.add(lotId);
+
+    const lot = db.lots.find(l => l.id === lotId);
+    if (!lot) {
+      impact.missingLots.add(lotId);
+      return;
+    }
+
+    if (lot.type === 'FG') {
+      impact.fgLots.add(lotId);
+      const po = db.productionOrders.find(p => p.outputLot === lotId);
+      if (po) {
+        impact.pos.add(po.id);
+        po.inputLots.forEach(il => traverseUpstream(il.id));
+      }
+    } else if (lot.type === 'RAW') {
+      impact.rawLots.add(lotId);
+      if (lot.supplierId) impact.suppliers.add(lot.supplierId);
+    }
+  };
+
+  const startLot = db.lots.find(l => l.id === targetId);
+  const startPO = db.productionOrders.find(p => p.id === targetId);
+  const usedAsInputPOs = db.productionOrders.filter(p => p.inputLots.some(i => i.id === targetId));
+
+  if (!startLot && !startPO && usedAsInputPOs.length === 0) {
+    return null;
+  }
+
+  if (usedAsInputPOs.length > 0 && !startLot) {
+    impact.missingLots.add(targetId);
+    usedAsInputPOs.forEach(po => {
+      impact.pos.add(po.id);
+      if (po.outputLot) traverseDownstream(po.outputLot);
+    });
+  } else if (startLot) {
+    traverseUpstream(targetId);
+    traverseDownstream(targetId);
+  } else if (startPO) {
+    impact.pos.add(targetId);
+    startPO.inputLots.forEach(il => traverseUpstream(il.id));
+    if (startPO.outputLot) traverseDownstream(startPO.outputLot);
+  }
+
+  return {
+    suppliers: Array.from(impact.suppliers),
+    rawLots: Array.from(impact.rawLots),
+    pos: Array.from(impact.pos),
+    fgLots: Array.from(impact.fgLots),
+    inventory: Array.from(impact.inventory),
+    shipments: Array.from(impact.shipments),
+    customers: Array.from(impact.customers),
+    missingLots: Array.from(impact.missingLots)
+  };
+};
+
+const validateLotQuantities = (db, lotId) => {
+  const lot = db.lots.find(item => item.id === lotId);
+  if (!lot) return null;
+
+  const inventory = db.inventory.filter(item => item.lotId === lotId);
+  const shipments = db.shipments.filter(item => item.lotId === lotId);
+
+  const inventoryQty = inventory.reduce((sum, item) => sum + item.qty, 0);
+  const shippedQty = shipments.reduce((sum, item) => sum + item.qty, 0);
+
+  const totalRecorded = inventoryQty + shippedQty;
+  const difference = lot.qty - totalRecorded;
+
+  return {
+    lotId,
+    producedQty: lot.qty,
+    uom: lot.uom,
+    inventoryQty,
+    shippedQty,
+    totalRecorded,
+    difference,
+    overAllocated: difference < 0,
+    status: difference < 0 ? 'OVER_ALLOCATED' : difference > 0 ? 'UNDER_RECONCILED' : 'RECONCILED'
+  };
+};
+
+const findMissingInputs = (db) => {
+  const knownLotIds = new Set(db.lots.map(lot => lot.id));
+  return db.productionOrders.flatMap(po =>
+    po.inputLots
+      .filter(input => !knownLotIds.has(input.id))
+      .map(input => ({
+        productionOrderId: po.id,
+        missingLotId: input.id,
+        requiredQty: input.qty,
+        outputLot: po.outputLot
+      }))
+  );
+};
+
+// --- Feature Components ---
+
+const Sidebar = () => {
+  const { activeTab, setActiveTab, resetDemo } = useContext(AppContext);
+  const navItems = [
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Overview' },
+    { id: 'traceability', icon: Share2, label: 'Lot Genealogy' },
+    { id: 'recall', icon: ShieldAlert, label: 'Recall Command' },
+    { id: 'ai', icon: Sparkles, label: 'AI Investigator' },
+    { id: 'anomalies', icon: AlertTriangle, label: 'Anomalies' },
+    { id: 'audit', icon: History, label: 'Audit Ledger' }
+  ];
+
+  return (
+    <div className="w-64 bg-[#0A0F1C] text-slate-300 flex flex-col h-screen shrink-0 border-r border-slate-800/50 shadow-2xl z-20">
+      <div className="p-6 flex items-center gap-3 text-white">
+        <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shadow-lg shadow-blue-900/50">
+          <Box className="w-5 h-5 text-white" />
+        </div>
+        <span className="font-bold text-lg tracking-tight">NexusChain</span>
+      </div>
+      
+      <div className="px-4 text-xs font-semibold text-slate-500 tracking-wider uppercase mb-2 mt-4">Command Center</div>
+      
+      <div className="flex-1 overflow-y-auto px-3 space-y-1">
+        {navItems.map(item => {
+          const isActive = activeTab === item.id;
+          return (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm font-medium
+                ${isActive 
+                  ? 'bg-blue-600/10 text-blue-400' 
+                  : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+            >
+              <item.icon className={`w-5 h-5 ${isActive ? 'text-blue-500' : 'text-slate-500'}`} />
+              {item.label}
+              {isActive && <ChevronRight className="w-4 h-4 ml-auto opacity-50" />}
+            </button>
+          )
+        })}
+      </div>
+      
+      <div className="p-4 mt-auto">
+        <div className="bg-slate-800/40 rounded-xl p-4 border border-slate-700/50">
+          <div className="flex items-center gap-3 mb-3">
+             <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+               <User className="w-4 h-4 text-slate-300" />
+             </div>
+             <div className="text-left overflow-hidden">
+               <p className="text-sm font-medium text-white truncate">Demo Admin</p>
+               <p className="text-xs text-slate-500 truncate">Quality Assurance</p>
+             </div>
+          </div>
+          <button onClick={resetDemo} className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-700/50 rounded-lg transition-colors border border-slate-700/50">
+            <RotateCcw className="w-3.5 h-3.5" /> Reset Demo Data
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Header = () => {
+  const { setGlobalSearchTarget, setActiveTab, activeTab } = useContext(AppContext);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const handleSearch = (e) => {
+    if (e.key === 'Enter' && searchTerm.trim()) {
+      setGlobalSearchTarget(searchTerm.trim());
+      setActiveTab('traceability');
+      setSearchTerm('');
+    }
+  };
+
+  const titles = {
+    dashboard: 'Enterprise Overview',
+    traceability: 'Lot Genealogy',
+    recall: 'Recall Command Center',
+    ai: 'AI Investigation Assistant',
+    anomalies: 'Anomaly Detection',
+    audit: 'Audit & System Reports'
+  };
+
+  return (
+    <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 h-16 flex items-center justify-between px-8 shrink-0 z-10 sticky top-0">
+      <div className="flex items-center gap-8 flex-1">
+        <h2 className="text-lg font-semibold text-slate-800 tracking-tight hidden sm:block min-w-[200px]">
+          {titles[activeTab]}
+        </h2>
+        <div className="relative max-w-md w-full">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input 
+            type="text" 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={handleSearch}
+            placeholder="Search lots, orders, shipments..." 
+            className="w-full pl-9 pr-12 py-2 bg-slate-100/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-sm transition-all placeholder:text-slate-400" 
+          />
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-medium text-slate-400 border border-slate-200 rounded px-1.5 py-0.5 bg-white">
+            ↵
+          </div>
+        </div>
+      </div>
+      
+      <div className="flex items-center gap-4 pl-4">
+        <Badge status="WARNING" className="hidden md:flex">DEMO ENVIRONMENT</Badge>
+        <button className="relative p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+          <Bell className="w-5 h-5" />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white"></span>
+        </button>
+      </div>
+    </header>
+  );
+};
+
+const Dashboard = () => {
+  const { db, setActiveTab } = useContext(AppContext);
+
+  const kpis = [
+    { label: 'Active Suppliers', value: db.suppliers.length, icon: Factory, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+    { label: 'Registered Raw Lots', value: db.lots.filter(l => l.type === 'RAW').length, icon: Database, color: 'text-indigo-600', bg: 'bg-indigo-50', border: 'border-indigo-100' },
+    { label: 'Finished Units On Hand', value: db.inventory.reduce((sum, item) => sum + item.qty, 0).toLocaleString(), icon: Package, color: 'text-teal-600', bg: 'bg-teal-50', border: 'border-teal-100' },
+    { label: 'Open Quality Incidents', value: db.lots.filter(l => [STATUS.WARNING, STATUS.QUARANTINED].includes(l.status)).length, icon: ShieldAlert, color: 'text-amber-600', bg: 'bg-amber-50', border: 'border-amber-100' }
+  ];
+
+  const inventoryData = db.inventory.reduce((acc, curr) => {
+    const existing = acc.find(x => x.name === curr.warehouseId);
+    if (existing) existing.qty += curr.qty;
+    else acc.push({ name: curr.warehouseId, qty: curr.qty });
+    return acc;
+  }, []);
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-in fade-in duration-500">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Network Health</h1>
+          <p className="text-slate-500 mt-1">Real-time supply chain operations and risk monitoring.</p>
+        </div>
+        <div className="flex gap-3">
+          <Button variant="secondary" icon={SearchCode} onClick={() => setActiveTab('traceability')}>Trace Lot</Button>
+          <Button icon={Play} onClick={() => setActiveTab('recall')}>Simulate Incident</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+        {kpis.map((kpi, idx) => (
+          <Card key={idx} className="p-6 flex items-start gap-4 hover:shadow-md transition-shadow">
+            <div className={`p-3 rounded-xl ${kpi.bg} ${kpi.border} border`}>
+              <kpi.icon className={`w-6 h-6 ${kpi.color}`} />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-slate-500 mb-1">{kpi.label}</p>
+              <p className="text-2xl font-bold text-slate-900 tracking-tight">{kpi.value}</p>
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <Card className="p-6 lg:col-span-2">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="font-semibold text-slate-900 tracking-tight">Finished Goods by Warehouse</h3>
+            <Badge status="OK">Live Data</Badge>
+          </div>
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={inventoryData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{fontSize: 12, fill: '#64748b'}} />
+                <RechartsTooltip 
+                  cursor={{fill: '#f8fafc'}} 
+                  contentStyle={{borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)', fontWeight: 500}} 
+                />
+                <Bar dataKey="qty" fill="#2563eb" radius={[6, 6, 0, 0]} maxBarSize={50}>
+                  {inventoryData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={index === 0 ? '#2563eb' : '#3b82f6'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        
+        <Card className="p-0 flex flex-col">
+          <div className="p-6 border-b border-slate-100">
+            <h3 className="font-semibold text-slate-900 tracking-tight">Recent Activity</h3>
+          </div>
+          <div className="p-6 pt-2 flex-1 overflow-y-auto">
+            <div className="relative border-l border-slate-200 ml-3 space-y-6 mt-4">
+              {db.auditEvents.slice(0, 4).map((event, i) => (
+                <div key={event.id} className="relative pl-6">
+                  <div className="absolute -left-1.5 top-1.5 w-3 h-3 bg-white border-2 border-blue-500 rounded-full shadow-sm" />
+                  <p className="text-xs font-semibold text-blue-600 mb-0.5">{event.action}</p>
+                  <p className="text-sm font-medium text-slate-800 leading-tight mb-1">{event.target}</p>
+                  <p className="text-sm text-slate-500 leading-snug line-clamp-2">{event.details}</p>
+                  <p className="text-xs text-slate-400 mt-1.5">{new Date(event.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                </div>
+              ))}
+              {db.auditEvents.length === 0 && <p className="text-slate-500 text-sm italic pl-4">No recent events.</p>}
+            </div>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+// --- Custom Traceability Node Components ---
+const TraceNode = ({ title, subtitle, icon: Icon, type, isTarget, status, children }) => {
+  const styles = {
+    source: 'border-slate-200 bg-white text-slate-700',
+    raw: 'border-indigo-200 bg-indigo-50/30 text-indigo-900',
+    po: 'border-blue-200 bg-blue-50/30 text-blue-900',
+    fg: 'border-teal-200 bg-teal-50/30 text-teal-900',
+    dist: 'border-slate-200 bg-slate-50 text-slate-800',
+    missing: 'border-red-300 bg-red-50 text-red-900 border-dashed'
+  };
+
+  return (
+    <div className={`relative p-4 rounded-xl border-2 w-64 shadow-sm transition-all hover:shadow-md ${styles[type]} ${isTarget ? 'ring-4 ring-blue-500/20 border-blue-500 shadow-blue-500/10' : ''}`}>
+      <div className="flex justify-between items-start mb-3">
+        <div className="flex items-center gap-2">
+          <div className="p-1.5 rounded-lg bg-white/60 shadow-sm border border-black/5">
+            <Icon className="w-4 h-4 opacity-75" />
+          </div>
+          <span className="font-mono text-sm font-bold tracking-tight">{title}</span>
+        </div>
+        {status && <Badge status={status} className="scale-90 origin-top-right">{status}</Badge>}
+      </div>
+      <div className="text-sm font-medium opacity-90">{subtitle}</div>
+      {children && <div className="mt-3 pt-3 border-t border-black/5 text-xs space-y-1.5 opacity-80">{children}</div>}
+    </div>
+  );
+};
+
+const Traceability = () => {
+  const { db, addAuditEvent, globalSearchTarget, setGlobalSearchTarget } = useContext(AppContext);
+  const [search, setSearch] = useState('RAW-1042');
+  const [graph, setGraph] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (globalSearchTarget) {
+      setSearch(globalSearchTarget);
+      runTrace(globalSearchTarget);
+      setGlobalSearchTarget(''); 
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [globalSearchTarget]);
+
+  const runTrace = (targetToSearch = search) => {
+    setError('');
+    const target = targetToSearch.trim().toUpperCase();
+    const impact = buildTraceabilityGraph(db, target);
+    
+    if (!impact) {
+      setGraph(null);
+      setError('Entity not found. Please enter a valid Lot ID or PO ID.');
+      return;
+    }
+    
+    setGraph(impact);
+    addAuditEvent('TRACE_EXECUTED', target, `Executed bi-directional genealogy trace on ${target}`);
+  };
+
+  // Helper to draw horizontal flow connectors
+  const Connector = () => (
+    <div className="hidden md:flex items-center justify-center w-12 shrink-0">
+      <div className="w-full h-0.5 bg-slate-200 relative">
+        <ChevronRight className="w-4 h-4 text-slate-300 absolute -right-2 top-1/2 -translate-y-1/2 bg-slate-50" />
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="p-8 max-w-[1600px] mx-auto space-y-8 animate-in fade-in">
+      <div>
+        <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Lot Genealogy</h1>
+        <p className="text-slate-500 mt-1">Map upstream origins and downstream exposure across the network.</p>
+      </div>
+
+      <Card className="p-2 sm:p-2 border-slate-200/60 bg-white/50 backdrop-blur-sm">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="flex-1 relative">
+            <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input 
+              type="text" 
+              value={search} 
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && runTrace()}
+              placeholder="Enter Lot ID or PO ID (e.g. RAW-1042, FG-3001, PO-2001)..." 
+              className="w-full pl-12 pr-4 py-3 bg-white border-0 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm shadow-sm inset-ring inset-ring-slate-100"
+            />
+          </div>
+          <Button onClick={() => runTrace()} icon={SearchCode} className="py-3 px-6 rounded-xl">Trace Network</Button>
+        </div>
+      </Card>
+      
+      {error && (
+        <div className="p-4 bg-red-50 text-red-600 rounded-xl border border-red-100 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5" />
+          <span className="font-medium text-sm">{error}</span>
+        </div>
+      )}
+
+      {graph && (
+        <div className="bg-slate-50/50 rounded-3xl p-8 overflow-x-auto border border-slate-200/60 shadow-inner min-h-[500px]">
+          <div className="min-w-max flex items-start gap-2">
+            
+            {/* Stage 1: Materials */}
+            <div className="flex flex-col gap-6">
+              <div className="text-slate-400 font-semibold text-xs tracking-widest uppercase flex items-center px-2">
+                Materials <TooltipIcon text="Suppliers and raw materials." />
+              </div>
+              
+              {graph.missingLots.map(ml => (
+                 <TraceNode key={ml} title={ml} subtitle="Missing Record" icon={FileWarning} type="missing" isTarget={ml === search}>
+                    <span className="text-red-600 font-medium">Traceability broken</span>
+                 </TraceNode>
+              ))}
+
+              {graph.rawLots.map(id => {
+                const lot = db.lots.find(l => l.id === id);
+                const sup = db.suppliers.find(s => s.id === lot?.supplierId);
+                return (
+                  <TraceNode key={id} title={id} subtitle={sup?.name || 'Unknown Supplier'} icon={Database} type="raw" isTarget={id === search} status={lot?.status}>
+                    <div className="flex justify-between"><span>Qty:</span> <span className="font-mono text-slate-900">{lot?.qty} {lot?.uom}</span></div>
+                  </TraceNode>
+                );
+              })}
+              {graph.rawLots.length === 0 && graph.missingLots.length === 0 && <div className="text-slate-400 text-sm italic py-4 px-2">No inputs found</div>}
+            </div>
+
+            <Connector />
+
+            {/* Stage 2: Production */}
+            <div className="flex flex-col gap-6">
+              <div className="text-slate-400 font-semibold text-xs tracking-widest uppercase flex items-center px-2">
+                Manufacturing <TooltipIcon text="Production orders transforming goods." />
+              </div>
+              
+              {graph.pos.map(id => {
+                const po = db.productionOrders.find(p => p.id === id);
+                return (
+                   <TraceNode key={id} title={id} subtitle="Production Order" icon={Activity} type="po" isTarget={id === search} status={po.status}>
+                      <div className="space-y-1">
+                        <div><span className="text-slate-500">In:</span> {po.inputLots.map(il => il.id).join(', ') || 'None'}</div>
+                        <div><span className="text-slate-500">Out:</span> <span className="font-medium text-slate-900">{po.outputLot || 'None'}</span></div>
+                      </div>
+                   </TraceNode>
+                );
+              })}
+              {graph.pos.length === 0 && <div className="text-slate-400 text-sm italic py-4 px-2">No production data</div>}
+            </div>
+
+            <Connector />
+
+            {/* Stage 3: Finished Goods */}
+            <div className="flex flex-col gap-6">
+              <div className="text-slate-400 font-semibold text-xs tracking-widest uppercase flex items-center px-2">
+                Finished Goods <TooltipIcon text="Completed products ready for distribution." />
+              </div>
+              
+              {graph.fgLots.map(id => {
+                const lot = db.lots.find(l => l.id === id);
+                return (
+                  <TraceNode key={id} title={id} subtitle="Finished Product" icon={Package} type="fg" isTarget={id === search} status={lot?.status}>
+                    <div className="flex justify-between"><span>Qty:</span> <span className="font-mono text-slate-900">{lot?.qty} {lot?.uom}</span></div>
+                  </TraceNode>
+                );
+              })}
+              {graph.fgLots.length === 0 && <div className="text-slate-400 text-sm italic py-4 px-2">No finished goods</div>}
+            </div>
+
+            <Connector />
+
+            {/* Stage 4: Distribution */}
+            <div className="flex flex-col gap-6">
+              <div className="text-slate-400 font-semibold text-xs tracking-widest uppercase flex items-center px-2">
+                Distribution <TooltipIcon text="Inventory and dispatched shipments." />
+              </div>
+              
+              {graph.inventory.map(id => {
+                const inv = db.inventory.find(i => i.id === id);
+                const uom = db.lots.find(l => l.id === inv.lotId)?.uom || 'units';
+                return (
+                   <TraceNode key={id} title={inv.warehouseId} subtitle={`Stock: ${inv.lotId}`} icon={Warehouse} type="dist" status={inv.status}>
+                     <div className="flex justify-between"><span>Available:</span> <span className="font-mono font-medium text-slate-900">{inv.qty} {uom}</span></div>
+                   </TraceNode>
+                );
+              })}
+
+              {graph.shipments.map(id => {
+                const shp = db.shipments.find(s => s.id === id);
+                const cust = db.customers.find(c => c.id === shp.customerId);
+                const uom = db.lots.find(l => l.id === shp.lotId)?.uom || 'units';
+                return (
+                  <TraceNode key={id} title={id} subtitle={cust?.name} icon={Truck} type="dist" status={shp.status}>
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono font-medium text-slate-900">{shp.qty} {uom}</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-400">{shp.lotId}</span>
+                    </div>
+                    {shp.recallStatus && <div className="text-amber-600 font-medium mt-1">Status: {shp.recallStatus}</div>}
+                  </TraceNode>
+                );
+              })}
+              {graph.inventory.length === 0 && graph.shipments.length === 0 && <div className="text-slate-400 text-sm italic py-4 px-2">No downstream distribution</div>}
+            </div>
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const RecallCommandCenter = () => {
+  const { db, executeRecallAtomically } = useContext(AppContext);
+  const [step, setStep] = useState(1);
+  const [targetLot, setTargetLot] = useState('RAW-1042');
+  const [modalConfig, setModalConfig] = useState({ isOpen: false });
+  
+  const impact = useMemo(() => {
+    if (!targetLot || step < 2) return null;
+    return buildTraceabilityGraph(db, targetLot.toUpperCase());
+  }, [targetLot, db, step]); 
+
+  const calculateExposure = () => {
+    if (!impact) return { fgQtyAtRisk: 0, fgQtyDelivered: 0, customers: 0, financialExposure: 0 };
+    
+    const fgInvQty = impact.inventory
+      .map(id => db.inventory.find(i => i.id === id))
+      .filter(i => db.lots.find(l => l.id === i.lotId)?.type === 'FG') 
+      .reduce((sum, i) => sum + i.qty, 0);
+
+    const inTransitQty = impact.shipments
+      .map(id => db.shipments.find(s => s.id === id))
+      .filter(s => s.status === STATUS.IN_TRANSIT)
+      .reduce((sum, s) => sum + s.qty, 0);
+
+    const deliveredQty = impact.shipments
+      .map(id => db.shipments.find(s => s.id === id))
+      .filter(s => s.status === STATUS.DELIVERED)
+      .reduce((sum, s) => sum + s.qty, 0);
+
+    return {
+      fgQtyAtRisk: fgInvQty + inTransitQty,
+      fgQtyDelivered: deliveredQty,
+      customers: impact.customers.length,
+      financialExposure: (fgInvQty + inTransitQty + deliveredQty) * 125 
+    };
+  };
+
+  const exposure = calculateExposure();
+
+  const simulateRecall = () => {
+    if (!targetLot.trim()) return;
+    const cleanTarget = targetLot.trim().toUpperCase();
+    const testImpact = buildTraceabilityGraph(db, cleanTarget);
+    if (!testImpact) {
+      setModalConfig({
+        isOpen: true,
+        title: "Lot Not Found",
+        message: `The Lot ID "${cleanTarget}" could not be found in the system. Please check the ID and try again.`,
+        isAlert: true,
+        onConfirm: () => setModalConfig({ isOpen: false }),
+        confirmText: "Acknowledge"
+      });
+      return;
+    }
+    setTargetLot(cleanTarget);
+    setStep(2);
+  };
+
+  const handleExecuteRequest = () => {
+    const isAlreadyExecuted = db.auditEvents.some(e => e.action === 'RECALL_EXECUTED' && e.target === targetLot);
+
+    if (isAlreadyExecuted) {
+      setModalConfig({
+        isOpen: true,
+        title: "Duplicate Execution Prevented",
+        message: "A recall has already been executed for this incident scope. The affected inventory is already locked.",
+        isAlert: true,
+        onConfirm: () => {
+          setModalConfig({ isOpen: false });
+          setStep(4);
+        },
+        confirmText: "View Report"
+      });
+      return;
+    }
+
+    setModalConfig({
+      isOpen: true,
+      title: "Authorization Required",
+      message: "Are you sure you want to execute quarantine protocols on all affected downstream lots?\n\nThis is a destructive action that will permanently lock warehouse inventory, halt active transit shipments, and flag delivered shipments for customer notification.",
+      isDanger: true,
+      onConfirm: () => {
+        setModalConfig({ isOpen: false });
+        executeRecallAtomically(targetLot, impact, exposure);
+        setStep(4);
+      },
+      onCancel: () => setModalConfig({ isOpen: false }),
+      confirmText: "Authorize & Execute",
+      cancelText: "Cancel"
+    });
+  };
+
+  const StepIndicator = () => (
+    <div className="hidden sm:flex items-center justify-between mb-10 relative px-4">
+      <div className="absolute top-1/2 left-0 w-full h-0.5 bg-slate-200 -z-10 -translate-y-1/2" />
+      {['Identify', 'Impact Analysis', 'Action Plan', 'Reconciliation'].map((label, i) => {
+        const isActive = step === i + 1;
+        const isPassed = step > i + 1;
+        return (
+          <div key={i} className="flex flex-col items-center relative bg-slate-50 px-4">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all duration-300 shadow-sm
+              ${isPassed ? 'bg-teal-500 text-white' : isActive ? 'bg-blue-600 text-white ring-4 ring-blue-600/20' : 'bg-white border-2 border-slate-200 text-slate-400'}`}>
+              {isPassed ? <CheckCircle className="w-5 h-5" /> : i + 1}
+            </div>
+            <span className={`absolute top-12 whitespace-nowrap text-sm font-semibold transition-colors
+              ${isActive ? 'text-blue-700' : isPassed ? 'text-slate-700' : 'text-slate-400'}`}>{label}</span>
+          </div>
+        )
+      })}
+    </div>
+  );
+
+  return (
+    <div className="p-8 max-w-6xl mx-auto space-y-8">
+      <Modal {...modalConfig} />
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+            <div className="p-2 bg-red-100 rounded-lg"><ShieldAlert className="w-6 h-6 text-red-600" /></div>
+            Recall Command Center
+          </h1>
+          <p className="text-slate-500 mt-2">Manage incidents, analyze exposure, and execute quarantine protocols securely.</p>
+        </div>
+        {step > 1 && <Button variant="secondary" onClick={() => setStep(1)} icon={ArrowLeft}>New Simulation</Button>}
+      </div>
+
+      <StepIndicator />
+      <div className="mt-16" />
+
+      {step === 1 && (
+        <Card className="p-10 max-w-2xl mx-auto text-center animate-in fade-in zoom-in-95 border-slate-200">
+          <div className="w-20 h-20 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-6">
+             <SearchCode className="w-10 h-10 text-amber-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Identify Suspect Material</h2>
+          <p className="text-slate-500 mt-3 max-w-md mx-auto leading-relaxed">Enter the defective lot number to safely build the traceability graph and calculate downstream exposure without altering operational data.</p>
+          
+          <div className="text-left mt-8 mb-6 relative">
+            <input 
+              type="text" 
+              value={targetLot} 
+              onChange={(e) => setTargetLot(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && simulateRecall()}
+              className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono text-lg shadow-inner transition-all placeholder:text-slate-400 text-slate-900" 
+              placeholder="e.g. RAW-1042"
+            />
+            <div className="absolute right-4 top-1/2 -translate-y-1/2 px-2 py-1 bg-white border border-slate-200 rounded text-xs font-semibold text-slate-400">LOT ID</div>
+          </div>
+          <Button onClick={simulateRecall} className="w-full text-base py-4 rounded-xl shadow-lg shadow-blue-500/20" icon={SearchCode}>Calculate Exposure Impact</Button>
+        </Card>
+      )}
+
+      {step === 2 && impact && (
+        <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <Card className="p-6 border-t-4 border-t-red-500">
+              <div className="text-sm font-semibold text-slate-500 flex items-center mb-2">
+                Actionable Units <TooltipIcon text="Total units in inventory and in-transit shipments that can be halted." />
+              </div>
+              <div className="text-4xl font-bold text-slate-900 tracking-tight">{exposure.fgQtyAtRisk.toLocaleString()}</div>
+              <div className="text-sm text-slate-400 mt-1 font-medium">units exposed</div>
+            </Card>
+            <Card className="p-6 border-t-4 border-t-orange-500">
+              <div className="text-sm font-semibold text-slate-500 flex items-center mb-2">
+                Delivered Units <TooltipIcon text="Units already delivered requiring formal customer notifications." />
+              </div>
+              <div className="text-4xl font-bold text-slate-900 tracking-tight">{exposure.fgQtyDelivered.toLocaleString()}</div>
+              <div className="text-sm text-slate-400 mt-1 font-medium">units require notice</div>
+            </Card>
+            <Card className="p-6 border-t-4 border-t-amber-500">
+              <div className="text-sm font-semibold text-slate-500 mb-2">Affected Customers</div>
+              <div className="text-4xl font-bold text-slate-900 tracking-tight">{exposure.customers}</div>
+              <div className="text-sm text-slate-400 mt-1 font-medium">accounts impacted</div>
+            </Card>
+            <Card className="p-6 border-t-4 border-t-slate-800 bg-slate-900 text-white">
+              <div className="text-sm font-semibold text-slate-400 mb-2">Est. Financial Impact</div>
+              <div className="text-4xl font-bold text-white tracking-tight">${exposure.financialExposure.toLocaleString()}</div>
+              <div className="text-sm text-slate-500 mt-1 font-medium">USD exposure</div>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <Card className="p-0 flex flex-col h-96">
+              <div className="p-5 border-b border-slate-100 bg-slate-50/50">
+                 <h3 className="font-semibold text-slate-900">Production Impact</h3>
+              </div>
+              <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+                {impact.pos.map(poId => {
+                  const po = db.productionOrders.find(p => p.id === poId);
+                  return (
+                    <div key={poId} className="flex justify-between items-center p-4 bg-white rounded-xl border border-slate-200 shadow-sm">
+                      <div>
+                        <span className="font-mono font-bold text-slate-800">{poId}</span>
+                        <span className="text-slate-500 text-sm ml-3">Yields <span className="font-medium text-slate-700">{po.outputLot}</span></span>
+                      </div>
+                      <Badge status="WARNING">Contaminated</Badge>
+                    </div>
+                  );
+                })}
+                {impact.pos.length === 0 && <p className="text-slate-500 italic text-sm">No downstream production impact found.</p>}
+              </div>
+            </Card>
+
+            <Card className="p-0 flex flex-col h-96">
+              <div className="p-5 border-b border-slate-100 bg-red-50/30">
+                 <h3 className="font-semibold text-red-900">Customer Exposure</h3>
+              </div>
+              <div className="p-5 space-y-3 flex-1 overflow-y-auto">
+                {impact.shipments.map(shpId => {
+                  const shp = db.shipments.find(s => s.id === shpId);
+                  const cust = db.customers.find(c => c.id === shp.customerId);
+                  return (
+                    <div key={shpId} className="flex justify-between items-center p-4 bg-red-50/50 border border-red-100 rounded-xl">
+                      <div>
+                        <div className="font-bold text-red-900">{cust.name}</div>
+                        <div className="text-red-700 text-sm mt-1 font-medium">Shipment {shpId} • {shp.qty} units</div>
+                      </div>
+                      <Badge status={shp.status}>{shp.status}</Badge>
+                    </div>
+                  );
+                })}
+                {impact.shipments.length === 0 && <p className="text-slate-500 italic text-sm">No customer shipments affected.</p>}
+              </div>
+            </Card>
+          </div>
+
+          <div className="flex justify-end gap-4 mt-8 pt-6 border-t border-slate-200">
+            <Button variant="secondary" onClick={() => setStep(1)} className="px-6 py-2.5">Cancel</Button>
+            <Button onClick={() => setStep(3)} className="px-8 py-2.5 shadow-md shadow-blue-500/20">Review Action Plan</Button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <Card className="p-10 max-w-3xl mx-auto space-y-8 border-red-200 shadow-xl shadow-red-900/5 animate-in fade-in zoom-in-95">
+          <div className="flex items-start gap-5">
+            <div className="p-4 bg-red-100 rounded-full shrink-0">
+              <Lock className="w-8 h-8 text-red-600" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-bold text-slate-900 tracking-tight">Execute Quarantine Protocol</h2>
+              <p className="text-slate-600 mt-2 leading-relaxed text-sm">
+                This action will immediately alter operational state. Affected warehouse inventory will transition to <strong className="text-red-600 font-semibold bg-red-50 px-1 rounded">QUARANTINED</strong>, preventing dispatch. Active transit shipments will update to <strong className="text-orange-600 font-semibold bg-orange-50 px-1 rounded">HOLD/RETURN</strong>.
+              </p>
+            </div>
+          </div>
+          
+          <div className="bg-slate-900 p-6 rounded-xl border border-slate-800 font-mono text-sm space-y-4 shadow-inner text-slate-300">
+            <div className="text-slate-500 border-b border-slate-800 pb-3 mb-3 text-xs uppercase tracking-wider font-sans font-bold">// Action Summary Preview</div>
+            <div className="flex justify-between items-center"><span>Target Defect:</span> <Badge status="CRITICAL" className="font-mono">{targetLot}</Badge></div>
+            <div className="flex justify-between items-center"><span>Lots to Lock:</span> <span className="text-white font-bold text-base">{impact.fgLots.length}</span></div>
+            <div className="flex justify-between items-center"><span>Inventory Locations:</span> <span className="text-white font-bold text-base">{impact.inventory.length}</span></div>
+            <div className="flex justify-between items-center"><span>Notices Required:</span> <span className="text-white font-bold text-base">{impact.customers.length}</span></div>
+          </div>
+
+          <div className="flex gap-4 pt-4">
+             <Button variant="secondary" onClick={() => setStep(2)} className="flex-1 py-3.5 text-base font-semibold">Back to Review</Button>
+             <Button variant="danger" onClick={handleExecuteRequest} className="flex-1 py-3.5 text-base font-bold shadow-lg shadow-red-500/30">
+               AUTHORIZE & EXECUTE
+             </Button>
+          </div>
+        </Card>
+      )}
+
+      {step === 4 && (
+        <div className="space-y-8 animate-in slide-in-from-bottom-4">
+          <div className="bg-teal-50 border border-teal-200 rounded-2xl p-8 flex flex-col items-center text-center shadow-sm">
+            <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-sm mb-4">
+              <ShieldCheck className="w-8 h-8 text-teal-600" />
+            </div>
+            <h2 className="text-2xl font-bold text-teal-900 tracking-tight">Protocol Executed Successfully</h2>
+            <p className="text-teal-700 mt-2 max-w-xl font-medium">Inventory has been locked and shipments halted. The reconciliation engine is tracking recovery progress.</p>
+          </div>
+
+          <Card className="p-0 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900 tracking-tight flex items-center gap-2">
+                <Package className="w-5 h-5 text-blue-600"/> Quantity Reconciliation Report
+              </h3>
+              <Badge status="INFO">Post-Execution State</Badge>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 font-semibold text-xs uppercase tracking-wider">
+                  <tr>
+                    <th className="p-4 pl-6">Finished Good Lot</th>
+                    <th className="p-4">Produced Qty</th>
+                    <th className="p-4">Recorded Total</th>
+                    <th className="p-4">Unreconciled Difference</th>
+                    <th className="p-4 pr-6">Reconciliation Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {impact.fgLots.map(lotId => {
+                    const rec = validateLotQuantities(db, lotId);
+                    if (!rec) return null;
+
+                    return (
+                      <tr key={lotId} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="p-4 pl-6 font-mono font-bold text-slate-800">{rec.lotId}</td>
+                        <td className="p-4 font-medium text-slate-700">{rec.producedQty} {rec.uom}</td>
+                        <td className="p-4">
+                          <span className="font-semibold text-slate-900">{rec.totalRecorded} {rec.uom}</span>
+                          <div className="text-xs text-slate-400 mt-1 font-medium">
+                             Inv: {rec.inventoryQty} | Shp: {rec.shippedQty}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          {rec.difference !== 0 ? (
+                            <span className={`font-bold flex items-center gap-1.5 px-2.5 py-1 rounded-md inline-flex ${rec.overAllocated ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>
+                              <AlertCircle className="w-4 h-4"/> 
+                              {Math.abs(rec.difference)} {rec.uom} {rec.overAllocated ? 'over-allocated' : 'unreconciled'}
+                            </span>
+                          ) : (
+                            <span className="text-teal-700 font-bold flex items-center gap-1.5 px-2.5 py-1 bg-teal-50 rounded-md inline-flex">
+                              <CheckCircle className="w-4 h-4"/> 0 {rec.uom}
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-4 pr-6">
+                          <Badge status={rec.status === 'RECONCILED' ? 'OK' : 'WARNING'}>
+                            {rec.status.replace('_', ' ')}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {impact.fgLots.length === 0 && (
+                    <tr><td colSpan="5" className="p-8 text-center text-slate-500 italic">No finished goods impacted by this incident.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const AIInvestigation = () => {
+  const { db } = useContext(AppContext);
+  const [messages, setMessages] = useState([
+    { role: 'ai', content: "Hello. I am the NexusChain AI Investigator. **Note: I am a simulated demo feature and do not connect to a live LLM.**\n\nI can parse intent and query our local dataset for traceability insights, anomaly summaries, and draft reports. What would you like to investigate?" }
+  ]);
+  const [input, setInput] = useState('');
+  const [isTyping, setIsTyping] = useState(false);
+  const chatEndRef = useRef(null);
+  const timeoutRef = useRef(null);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  const handleSend = () => {
+    if (!input.trim() || isTyping) return;
+    
+    const userMsg = input.trim();
+    setMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+    setInput('');
+    setIsTyping(true);
+
+    timeoutRef.current = setTimeout(() => {
+      let aiResponse = "";
+      const lowerInput = userMsg.toLowerCase();
+      
+      const idMatch = userMsg.match(/([A-Z]+-\d+|RAW-MISSING)/i);
+      const detectedId = idMatch ? idMatch[0].toUpperCase() : null;
+
+      if (detectedId && (lowerInput.includes('trace') || lowerInput.includes('affect') || lowerInput.includes(detectedId.toLowerCase()))) {
+        const impact = buildTraceabilityGraph(db, detectedId);
+        if (impact) {
+            const missingWarning = impact.missingLots.length > 0 ? `\n\n⚠️ **Traceability Gap Detected:**\nThe following upstream links are missing from the system: **${impact.missingLots.join(', ')}**.` : '';
+            aiResponse = `**Traceability Analysis for ${detectedId}:**\nI've analyzed the genealogy graph. The lot is connected to production orders **${impact.pos.join(', ') || 'none'}**, yielding finished goods **${impact.fgLots.join(', ') || 'none'}**.\n\nCurrently, there are **${impact.inventory.length}** inventory locations and **${impact.shipments.length}** shipments affected, exposing **${impact.customers.length}** customers.${missingWarning}`;
+        } else {
+            aiResponse = `I could not locate **${detectedId}** in the current dataset. Please verify the ID.`;
+        }
+      } else if (lowerInput.includes('report') || lowerInput.includes('draft')) {
+         aiResponse = `**DRAFT RECALL INCIDENT REPORT**\n\n**Date:** ${new Date().toLocaleDateString()}\n**Trigger Event:** Quality deviation detected.\n\n**Action Required:** Immediate quarantine of active stock and issue return notices to affected customers.\n\n*Note: This is a generated template based on current state. Navigate to the Recall Command Center to officially authorize execution.*`;
+      } else if (lowerInput.includes('anomaly') || lowerInput.includes('gap') || lowerInput.includes('unreconciled')) {
+        aiResponse = `I've detected the following discrepancies in the dataset:\n\n1. **Orphaned Input:** FG-4001 was produced using \`RAW-MISSING\`, which lacks a valid supplier registry entry.\n2. **Over-Allocation:** Shipment SHP-003 shows 500 units of FG-4001 delivered, but production order PO-9999 only yielded 200 units.\n\nI highly recommend reviewing the Anomaly Detection module for details.`;
+      } else {
+        aiResponse = "I am analyzing the network for your request. Based on the current deterministic state, operations outside the known anomaly zones are nominal. Could you provide a specific Lot ID (e.g., RAW-1042) or refine your query?";
+      }
+
+      setIsTyping(false);
+      setMessages(prev => [...prev, { role: 'ai', content: aiResponse }]);
+    }, 1200);
+  };
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto h-[calc(100vh-64px)] flex flex-col">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+           <div className="p-2 bg-violet-100 rounded-lg"><Sparkles className="w-6 h-6 text-violet-600" /></div>
+           AI Investigator <Badge status="VIOLET" className="ml-2">SIMULATED DEMO</Badge>
+        </h1>
+        <p className="text-slate-500 mt-2">Natural language interface for deep network querying and report generation.</p>
+      </div>
+
+      <Card className="flex-1 flex flex-col overflow-hidden bg-white shadow-xl shadow-slate-200/50 border-slate-200/60 p-0 rounded-2xl">
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/30">
+        {messages.map((msg, idx) => (
+          <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {msg.role === 'ai' && (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-sm">
+                  <Sparkles className="w-5 h-5 text-white" />
+                </div>
+              )}
+              <div className={`max-w-[80%] p-4 text-sm leading-relaxed whitespace-pre-wrap shadow-sm ${
+                msg.role === 'user' 
+                  ? 'bg-blue-600 text-white rounded-2xl rounded-br-sm' 
+                  : 'bg-white text-slate-800 border border-slate-200 rounded-2xl rounded-bl-sm font-medium'
+              }`}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+          {isTyping && (
+             <div className="flex gap-4 justify-start">
+               <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shrink-0 shadow-sm">
+                  <Sparkles className="w-5 h-5 text-white" />
+                </div>
+                <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm p-4 shadow-sm flex items-center gap-1.5">
+                  <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 bg-violet-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+             </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+        
+        <div className="p-6 bg-white border-t border-slate-100">
+          <div className="flex gap-2 mb-4 overflow-x-auto pb-2 hide-scrollbar">
+            {["Analyze impact of RAW-1042", "Are there any traceability gaps?", "Draft a recall report for management"].map(prompt => (
+              <button key={prompt} onClick={() => setInput(prompt)} className="whitespace-nowrap px-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-xs font-semibold text-slate-600 hover:border-violet-300 hover:text-violet-700 hover:bg-violet-50 transition-all shadow-sm">
+                {prompt}
+              </button>
+            ))}
+          </div>
+          <div className="relative">
+            <input 
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+              placeholder="Ask the AI investigator..."
+              className="w-full pl-5 pr-14 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 shadow-inner text-sm font-medium transition-all"
+            />
+            <button 
+              onClick={handleSend}
+              disabled={!input.trim() || isTyping}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const Anomalies = () => {
+  const { db } = useContext(AppContext);
+  const missingInputs = findMissingInputs(db);
+  const fgLots = db.lots.filter(l => l.type === 'FG');
+  const overAllocatedLots = fgLots.map(l => validateLotQuantities(db, l.id)).filter(r => r && r.overAllocated);
+
+  return (
+    <div className="p-8 max-w-6xl mx-auto space-y-8 animate-in fade-in">
+       <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+             <div className="p-2 bg-amber-100 rounded-lg"><AlertTriangle className="w-6 h-6 text-amber-600" /></div>
+             Planted Test Anomalies
+          </h1>
+          <p className="text-slate-500 mt-2 max-w-3xl">This dashboard highlights deterministic defects intentionally seeded into the test dataset to verify robust reconciliation and traceability logic.</p>
+        </div>
+
+        <div className="grid gap-6">
+          <Card className="p-8 border-l-4 border-l-red-500 flex flex-col sm:flex-row gap-6 hover:shadow-lg transition-shadow">
+            <div className="shrink-0 hidden sm:block p-4 bg-red-50 rounded-2xl"><FileWarning className="w-8 h-8 text-red-500" /></div>
+            <div>
+              <div className="flex justify-between items-start mb-2">
+                 <h3 className="font-bold text-xl text-slate-900 tracking-tight">Anomaly 1: Broken Traceability Link</h3>
+                 <Badge status="CRITICAL">Traceability Broken</Badge>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-4 mt-4 border border-slate-100 space-y-3">
+                <p className="text-slate-600 text-sm leading-relaxed flex items-start gap-2">
+                  <span className="font-bold text-slate-700 mt-0.5">Expected:</span> All production inputs trace back to valid registered lots.
+                </p>
+                <div className="w-full h-px bg-slate-200"></div>
+                <div className="text-slate-600 text-sm leading-relaxed flex items-start gap-2">
+                  <span className="font-bold text-slate-700 mt-0.5 shrink-0">Observed:</span> 
+                  <div>
+                  {missingInputs.length > 0 ? missingInputs.map((mi, i) => (
+                    <span key={i} className="block">
+                      Production Order <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded font-bold text-slate-800 shadow-sm">{mi.productionOrderId}</code> used <code className="bg-red-50 border border-red-100 px-1.5 py-0.5 rounded font-bold text-red-600 shadow-sm">{mi.missingLotId}</code>, which does not exist in the database.
+                    </span>
+                  )) : "No missing inputs detected."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+          
+          <Card className="p-8 border-l-4 border-l-red-500 flex flex-col sm:flex-row gap-6 hover:shadow-lg transition-shadow">
+            <div className="shrink-0 hidden sm:block p-4 bg-red-50 rounded-2xl"><Activity className="w-8 h-8 text-red-500" /></div>
+            <div>
+               <div className="flex justify-between items-start mb-2">
+                 <h3 className="font-bold text-xl text-slate-900 tracking-tight">Anomaly 2: Quantity Over-Allocation</h3>
+                 <Badge status="CRITICAL">Reconciliation Failure</Badge>
+              </div>
+              <div className="bg-slate-50 rounded-xl p-4 mt-4 border border-slate-100 space-y-3">
+                 <p className="text-slate-600 text-sm leading-relaxed flex items-start gap-2">
+                  <span className="font-bold text-slate-700 mt-0.5">Expected:</span> Recorded inventory and shipments cannot exceed produced quantity.
+                </p>
+                <div className="w-full h-px bg-slate-200"></div>
+                <div className="text-slate-600 text-sm leading-relaxed flex items-start gap-2">
+                  <span className="font-bold text-slate-700 mt-0.5 shrink-0">Observed:</span>
+                  <div>
+                  {overAllocatedLots.length > 0 ? overAllocatedLots.map((oa, i) => (
+                    <span key={i} className="block">
+                      <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded font-bold text-slate-800 shadow-sm">{oa.lotId}</code> has {oa.totalRecorded} units recorded (Inv + Shipped) but only {oa.producedQty} units were produced. (<strong className="text-red-600">{Math.abs(oa.difference)} units over-allocated</strong>).
+                    </span>
+                  )) : "No quantity over-allocations detected."}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+        </div>
+    </div>
+  );
+};
+
+const AuditLog = () => {
+  const { db } = useContext(AppContext);
+  
+  const exportJson = () => {
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(db.auditEvents, null, 2));
+    const downloadAnchorNode = document.createElement('a');
+    downloadAnchorNode.setAttribute("href", dataStr);
+    downloadAnchorNode.setAttribute("download", "audit_log.json");
+    document.body.appendChild(downloadAnchorNode); 
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+  };
+
+  return (
+    <div className="p-8 max-w-7xl mx-auto space-y-8 animate-in fade-in">
+       <div>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight flex items-center gap-3">
+            <div className="p-2 bg-slate-100 rounded-lg"><History className="w-6 h-6 text-slate-600" /></div>
+            Audit Log & System Reports
+          </h1>
+          <p className="text-slate-500 mt-2 max-w-3xl">Local ledger of traceability queries, simulations, and executed actions. <strong className="text-amber-600 bg-amber-50 px-1 rounded">Note: Editable via browser storage. In production, this would be cryptographically immutable.</strong></p>
+        </div>
+
+        <Card className="p-0 overflow-hidden border-slate-200/60 shadow-lg shadow-slate-200/20">
+          <div className="p-5 bg-white border-b border-slate-100 flex justify-between items-center">
+             <span className="font-semibold text-slate-900 tracking-tight text-lg">System Events Ledger</span>
+             <Button variant="secondary" icon={Download} onClick={exportJson}>Export JSON</Button>
+          </div>
+          <div className="overflow-x-auto bg-slate-50/30">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 text-xs uppercase tracking-wider font-semibold">
+                <tr>
+                  <th className="p-5 pl-6">Timestamp</th>
+                  <th className="p-5">Action</th>
+                  <th className="p-5">Target Entity</th>
+                  <th className="p-5">Actor</th>
+                  <th className="p-5 pr-6 w-full">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {db.auditEvents.map((event, index) => (
+                  <tr key={event.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="p-5 pl-6 text-slate-500 font-medium">
+                      {new Date(event.timestamp).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' })}
+                    </td>
+                    <td className="p-5"><Badge status={event.action === 'RECALL_EXECUTED' ? 'CRITICAL' : 'INFO'} className="shadow-sm">{event.action}</Badge></td>
+                    <td className="p-5 font-mono font-bold text-slate-700">{event.target}</td>
+                    <td className="p-5 text-slate-600 font-medium">{event.actor}</td>
+                    <td className="p-5 text-slate-600 truncate max-w-md" title={event.details}>{event.details}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+    </div>
+  );
+};
+
+// --- Main Application Wrapper ---
+export default function App() {
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [db, setDb] = useLocalStorageState('sc-demo-db', INITIAL_DATA);
+  const [globalSearchTarget, setGlobalSearchTarget] = useState('');
+  const [resetModalConfig, setResetModalConfig] = useState({ isOpen: false });
+
+  const requestReset = () => {
+    setResetModalConfig({
+      isOpen: true,
+      title: "Reset Demo Environment",
+      message: "Are you sure you want to reset the demo to its initial state? All your progress, audit logs, and simulated recalls will be permanently lost.",
+      isDanger: true,
+      onConfirm: () => {
+        setDb(deepClone(INITIAL_DATA));
+        setActiveTab('dashboard');
+        setResetModalConfig({ isOpen: false });
+      },
+      onCancel: () => setResetModalConfig({ isOpen: false }),
+      confirmText: "Reset Environment",
+      cancelText: "Cancel"
+    });
+  };
+
+  const addAuditEvent = (action, target, details) => {
+    setDb(prev => ({
+      ...prev,
+      auditEvents: [{
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        actor: 'Admin User (Demo)',
+        action,
+        target,
+        details
+      }, ...prev.auditEvents]
+    }));
+  };
+
+  const executeRecallAtomically = (targetLot, impact, exposure) => {
+    setDb(prev => {
+      const nextDb = deepClone(prev);
+      
+      impact.rawLots.concat(impact.fgLots).forEach(lotId => {
+        const lot = nextDb.lots.find(l => l.id === lotId);
+        if (lot) lot.status = STATUS.QUARANTINED;
+      });
+
+      impact.inventory.forEach(invId => {
+        const inv = nextDb.inventory.find(i => i.id === invId);
+        if (inv) inv.status = STATUS.QUARANTINED;
+      });
+
+      impact.shipments.forEach(shpId => {
+        const shp = nextDb.shipments.find(s => s.id === shpId);
+        if (shp) {
+          if (shp.status === STATUS.IN_TRANSIT) {
+            shp.status = STATUS.HOLD;
+          } else if (shp.status === STATUS.DELIVERED && !shp.recallStatus) {
+            shp.recallStatus = 'NOTIFIED';
+            shp.notificationTimestamp = new Date().toISOString();
+          }
+        }
+      });
+
+      nextDb.auditEvents.unshift({
+        id: generateId(),
+        timestamp: new Date().toISOString(),
+        actor: 'Admin User (Demo)',
+        action: 'RECALL_EXECUTED',
+        target: targetLot,
+        details: `Quarantined ${exposure.fgQtyAtRisk} units across ${impact.inventory.length} warehouses and placed holds on active shipments.`
+      });
+
+      return nextDb;
+    });
+  };
+
+  const contextValue = {
+    db, setDb, activeTab, setActiveTab, resetDemo: requestReset, addAuditEvent,
+    globalSearchTarget, setGlobalSearchTarget, executeRecallAtomically
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'dashboard': return <Dashboard />;
+      case 'traceability': return <Traceability />;
+      case 'recall': return <RecallCommandCenter />;
+      case 'ai': return <AIInvestigation />;
+      case 'anomalies': return <Anomalies />;
+      case 'audit': return <AuditLog />;
+      default: return <Dashboard />;
+    }
+  };
+
+  return (
+    <AppContext.Provider value={contextValue}>
+      <Modal {...resetModalConfig} />
+      <div className="flex h-screen bg-[#F8FAFC] overflow-hidden font-sans text-slate-900 selection:bg-blue-200 selection:text-blue-900">
+        <Sidebar />
+        <div className="flex-1 flex flex-col min-w-0 relative">
+          <Header />
+          <main className="flex-1 overflow-y-auto pb-12">
+            {renderContent()}
+          </main>
+        </div>
+      </div>
+    </AppContext.Provider>
+  );
+}
